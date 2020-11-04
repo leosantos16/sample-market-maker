@@ -91,6 +91,12 @@ class BitMEX(object):
         """
         return self.ws.recent_trades()
 
+    def historical_data(self, symbol, filter=None):
+        query = {}
+        if filter is not None:
+            query['filter'] = json.dumps(filter)
+        return self._curl_bitmex(path='quote/bucketed', query=query, verb='GET')
+
     #
     # Authentication required methods
     #

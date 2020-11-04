@@ -108,7 +108,8 @@ LOG_LEVEL = logging.INFO
 ORDERID_PREFIX = "mm_bitmex_"
 
 # If any of these files (and this file) changes, reload the bot.
-WATCHED_FILES = [join('market_maker', 'market_maker.py'), join('market_maker', 'bitmex.py'), 'settings.py']
+WATCHED_FILES = [join('market_maker', 'market_maker.py'),
+                 join('market_maker', 'bitmex.py'), 'settings.py']
 
 
 ########################################################################################################################
@@ -117,3 +118,14 @@ WATCHED_FILES = [join('market_maker', 'market_maker.py'), join('market_maker', '
 
 # Specify the contracts that you hold. These will be used in portfolio calculations.
 CONTRACTS = ['XBTUSD']
+
+########################################################################################################################
+# Bollinger Bands
+########################################################################################################################
+
+# Absolute maximum range of bollinger bands allowed to run on.
+# Useful for volatile markets.
+MAX_RANGE = 100
+
+# Timestamp which closing bid prices are used to calculate bollinger bands.
+TIMESTAMP = '5m'
