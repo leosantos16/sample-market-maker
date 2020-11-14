@@ -188,27 +188,6 @@ class ExchangeInterface:
             raise errors.MarketClosedError("The instrument %s is not open. State: %s" %
                                            (self.symbol, instrument["state"]))
 
-    def check_bollinger(self):
-        data = {
-            'binSize': settings.TIMESTAMP,
-            'symbol': settings.SYMBOL,
-            'count': 20,
-            'reverse': 'true'
-        }
-        historical_data = self.bitmex.historical_data(settings.SYMBOL, data)
-        bands = BollingerBands(historical_data)
-        distance = bands.upper - bands.lower
-        logger.info("Lower Band: %d" % bands.lower)
-        logger.info("Upper Band: %d" % bands.upper)
-        interval = (
-            distance / (settings.ORDER_PAIRS * 2)) / distance
-        logger.info("Orders interval: %.2f" % interval)
-        if distance > settings.MAX_RANGE:
-            logger.error(
-                "Market too volatile, exiting!")
-            self.exit()
-        settings.INTERVAL = interval
-
     def check_if_orderbook_empty(self):
         """This function checks whether the order book is empty"""
         instrument = self.get_instrument()
@@ -248,6 +227,9 @@ class OrderManager:
             logger.info(
                 "Order Manager initializing, connecting to BitMEX. Live run: executing real trades.")
 
+        self.percent_b = 0
+        self.upper = 0
+        self.lower = 0
         self.start_time = datetime.now()
         self.instrument = self.exchange.get_instrument()
         self.starting_qty = self.exchange.get_delta()
@@ -261,6 +243,26 @@ class OrderManager:
 
         # Create orders and converge.
         self.place_orders()
+
+    def check_bollinger(self):
+        historical_data = self.exchange.bitmex.historical_data(
+            settings.SYMBOL, settings.TIMESTAMP)
+        bands = BollingerBands(historical_data)
+        distance = bands.upper - bands.lower
+        self.percent_b = bands.percent_b
+        self.upper = bands.upper
+        self.lower = bands.lower
+        logger.info("Middle: %d" % bands.middle)
+        logger.info("Lower Band: %d" % bands.lower)
+        logger.info("Upper Band: %d" % bands.upper)
+        interval = (
+            distance / (settings.ORDER_PAIRS * 2)) / 10000
+        logger.info("Orders interval: %.2f" % interval)
+        if distance > settings.MAX_RANGE:
+            logger.error(
+                "Market too volatile, exiting!")
+            self.exit()
+        settings.INTERVAL = interval
 
     def print_status(self):
         """Print the current MM status."""
@@ -342,7 +344,16 @@ class OrderManager:
             if index < 0 and start_position > self.start_position_sell:
                 start_position = self.start_position_buy
 
-        return math.toNearest(start_position * (1 + settings.INTERVAL) ** index, self.instrument['tickSize'])
+        start_position = start_position * (1 + settings.INTERVAL) ** index
+        # Ignore buy orders under bollinger
+        if index < 0 and start_position < self.lower:
+            return -1
+
+            # Ignore sell orders above bollinger
+        if index > 0 and start_position > self.upper:
+            return -1
+
+        return math.toNearest(start_position, self.instrument['tickSize'])
 
     ###
     # Orders
@@ -359,9 +370,13 @@ class OrderManager:
         # down and a new order would be created at the outside.
         for i in reversed(range(1, settings.ORDER_PAIRS + 1)):
             if not self.long_position_limit_exceeded():
-                buy_orders.append(self.prepare_order(-i))
+                order = self.prepare_order(-i)
+                if order != -1:
+                    buy_orders.append(order)
             if not self.short_position_limit_exceeded():
-                sell_orders.append(self.prepare_order(i))
+                order = self.prepare_order(i)
+                if order != -1:
+                    sell_orders.append(order)
 
         return self.converge_orders(buy_orders, sell_orders)
 
@@ -369,18 +384,16 @@ class OrderManager:
         """Create an order object."""
 
         currentMargin = self.exchange.get_margin()
-
-        maxInitialSize = currentMargin * 0.1
-
-        maxStepSize = currentMargin * 0.01
-
+        maxInitialSize = currentMargin["marginBalance"] / 10000000 * 0.1
+        maxStepSize = currentMargin["marginBalance"] / 10000000 * 0.01
         quantity = maxInitialSize + \
             ((abs(index) - 1) * maxStepSize)
-
         if quantity < 1:
             quantity = 1
 
         price = self.get_price_offset(index)
+        if price == -1:
+            return -1
 
         return {'price': price, 'orderQty': quantity, 'side': "Buy" if index < 0 else "Sell"}
 
@@ -507,13 +520,15 @@ class OrderManager:
         ticker = self.get_ticker()
 
         # Sanity check:
-        if self.get_price_offset(-1) >= ticker["sell"] or self.get_price_offset(1) <= ticker["buy"]:
-            logger.error("Buy: %s, Sell: %s" %
-                         (self.start_position_buy, self.start_position_sell))
-            logger.error("First buy position: %s\nBitMEX Best Ask: %s\nFirst sell position: %s\nBitMEX Best Bid: %s" %
-                         (self.get_price_offset(-1), ticker["sell"], self.get_price_offset(1), ticker["buy"]))
-            logger.error("Sanity check failed, exchange data is inconsistent")
-            self.exit()
+        if self.get_price_offset(-1) != -1 and self.get_price_offset(1) != -1:
+            if self.get_price_offset(-1) >= ticker["sell"] or self.get_price_offset(1) <= ticker["buy"]:
+                logger.error("Buy: %s, Sell: %s" %
+                             (self.start_position_buy, self.start_position_sell))
+                logger.error("First buy position: %s\nBitMEX Best Ask: %s\nFirst sell position: %s\nBitMEX Best Bid: %s" %
+                             (self.get_price_offset(-1), ticker["sell"], self.get_price_offset(1), ticker["buy"]))
+                logger.error(
+                    "Sanity check failed, exchange data is inconsistent")
+                self.exit()
 
         # Messaging if the position limits are reached
         if self.long_position_limit_exceeded():

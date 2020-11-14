@@ -28,8 +28,7 @@ symbol = sys.argv[1] if len(sys.argv) > 1 else None
 if symbol:
     print("Importing symbol settings for %s..." % symbol)
     try:
-        symbolSettings = import_path(
-            os.path.join('..', 'settings-%s' % symbol))
+        symbolSettings = import_path(os.path.join('..', 'settings-%s' % symbol))
     except Exception as e:
         print("Unable to find settings-%s.py." % symbol)
 
@@ -39,5 +38,6 @@ settings.update(vars(baseSettings))
 settings.update(vars(userSettings))
 if symbolSettings:
     settings.update(vars(symbolSettings))
+
 # Main export
 settings = dotdict(settings)
